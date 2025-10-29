@@ -24,13 +24,13 @@ app = Flask(__name__)
 dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
 if os.path.exists(dotenv_path):
     load_dotenv(dotenv_path)
-
-# 환경 변수에서 MONGO_URI를 가져옵니다.
+else:
+    # .env 파일이 없는 경우 (배포 환경), 환경 변수가 설정되어 있다고 가정합니다.
+    # Render.com과 같은 서비스에서는 환경 변수를 직접 설정해야 합니다.
+    pass
+    
+# 환경 변수에서 설정 값들을 가져옵니다.
 mongo_uri = os.getenv("MONGO_URI")
-if not mongo_uri:
-    # MONGO_URI가 없는 경우, 로컬 .env 파일 또는 배포 플랫폼의 환경 변수 설정이 필요함을 알립니다.
-    raise ValueError("MONGO_URI가 설정되지 않았습니다. .env 파일 또는 배포 환경의 환경 변수를 확인해주세요.")
-
 # MongoDB 및 Bcrypt 설정
 app.config["MONGO_URI"] = None  # 초기화
 app.config["MONGO_URI"] = mongo_uri
