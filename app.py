@@ -20,19 +20,16 @@ from SteganoDCT import StegoDCT
 
 app = Flask(__name__)
 
-# .env 파일 로드 및 MONGO_URI 확인
+# .env 파일이 있는 경우 로드 (주로 로컬 개발 환경에서 사용)
 dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
 if os.path.exists(dotenv_path):
     load_dotenv(dotenv_path)
-    mongo_uri = os.getenv("MONGO_URI")
-    if not mongo_uri:
-        raise ValueError(
-            "MONGO_URI가 .env 파일에 설정되지 않았습니다. .env 파일 내용을 확인해주세요."
-        )
-else:
-    raise FileNotFoundError(
-        ".env 파일을 찾을 수 없습니다. 프로젝트 루트 디렉토리에 .env 파일이 있는지 확인해주세요."
-    )
+
+# 환경 변수에서 MONGO_URI를 가져옵니다.
+mongo_uri = os.getenv("MONGO_URI")
+if not mongo_uri:
+    # MONGO_URI가 없는 경우, 로컬 .env 파일 또는 배포 플랫폼의 환경 변수 설정이 필요함을 알립니다.
+    raise ValueError("MONGO_URI가 설정되지 않았습니다. .env 파일 또는 배포 환경의 환경 변수를 확인해주세요.")
 
 # MongoDB 및 Bcrypt 설정
 app.config["MONGO_URI"] = None  # 초기화
