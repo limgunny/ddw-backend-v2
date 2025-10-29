@@ -240,9 +240,16 @@ def create_post(current_user):
         if original_owner_email:
             original_owner_email = original_owner_email.rstrip('\x00')
 
+        # 추출된 이메일로 DB에서 사용자를 찾아봄 (부분 일치 포함)
+        found_owner = None
+        if original_owner_email and '@' in original_owner_email:
+            # 마지막 글자가 잘렸을 가능성을 대비해, 추출된 이메일로 시작하는 사용자를 찾음
+            regex_pattern = f"^{re.escape(original_owner_email)}"
+            found_owner = mongo.db.users.find_one({"email": {"$regex": regex_pattern}})
+
         # 2. 워터마크 존재 여부에 따른 분기 처리
-        # 2-1. 워터마크가 없는 경우: 전처리 후 새로 삽입
-        if not original_owner_email or '@' not in original_owner_email:
+        # 2-1. 워터마크가 없거나, 있어도 DB에 존재하는 사용자로 추정되지 않는 경우: 새로 삽입
+        if not found_owner:
             post = {'isViolation': False}
             # 이미지를 표준 형식으로 변환
             preprocessed_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{unique_id}_preprocessed.jpg")
@@ -253,7 +260,7 @@ def create_post(current_user):
             steganographer.encrypt(preprocessed_path, watermark_message, output_path, 'png')
             image_to_upload = output_path # 최종 업로드할 이미지는 워터마크가 삽입된 PNG
 
-        # 2-2. 워터마크가 있는 경우: 소유권 검증 (덮어쓰지 않음)
+        # 2-2. 워터마크가 있고, DB에 존재하는 사용자로 추정되는 경우: 소유권 검증
         else:
             # 이미지를 표준 형식으로 변환 (워터마크는 유지됨)
             preprocessed_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{unique_id}_preprocessed.jpg")
@@ -261,19 +268,12 @@ def create_post(current_user):
             image_to_upload = preprocessed_path # 워터마크를 새로 삽입하지 않고 전처리된 이미지 그대로 업로드
 
             # 게시자와 워터마크 소유자가 같은 경우
-            if current_user['email'].startswith(original_owner_email):
+            if current_user['email'] == found_owner['email']:
                 post = {'isViolation': False}
             # 게시자와 워터마크 소유자가 다른 경우
             else:
                 post = {'isViolation': True}
-                # 마지막 글자가 잘린 경우를 대비해, DB에서 원본 소유자의 전체 이메일을 찾음
-                regex_pattern = f"^{re.escape(original_owner_email)}.$"
-                found_owner = mongo.db.users.find_one({"email": {"$regex": regex_pattern}})
-                if found_owner:
-                    post['originalOwnerEmail'] = found_owner['email']
-                else:
-                    # 일치하는 사용자를 찾지 못한 경우, 추출된 그대로 저장
-                    post['originalOwnerEmail'] = original_owner_email
+                post['originalOwnerEmail'] = found_owner['email']
 
         # 3. Cloudinary에 최종 이미지 업로드
         upload_result = cloudinary.uploader.upload(image_to_upload, folder="dct_watermark")
