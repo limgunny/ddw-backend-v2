@@ -394,6 +394,8 @@ def get_post(post_id):
     post = mongo.db.posts.find_one_or_404({'_id': ObjectId(post_id)})
     post['createdAt'] = post['createdAt'].isoformat()
     post['_id'] = str(post['_id'])
+    # 댓글 수 추가
+    post['commentCount'] = mongo.db.comments.count_documents({'post_id': ObjectId(post_id)})
     return jsonify(post), 200
 
 @app.route('/api/posts/<post_id>/like', methods=['PUT'])
@@ -535,6 +537,8 @@ def get_my_posts(current_user):
     posts = list(mongo.db.posts.find({'authorEmail': current_user['email']}).sort('createdAt', -1))
     for post in posts:
         post['_id'] = str(post['_id'])
+        # 댓글 수 추가
+        post['commentCount'] = mongo.db.comments.count_documents({'post_id': ObjectId(post['_id'])})
     return jsonify(posts), 200
 
 @app.route('/api/decrypt', methods=['POST'])
