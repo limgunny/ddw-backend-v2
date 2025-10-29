@@ -18,22 +18,13 @@ from PIL import Image, ImageOps
 # SteganoDCT.py 파일에서 StegoDCT 클래스를 가져옵니다.
 from SteganoDCT import StegoDCT
 
+# .env 파일에서 환경 변수 로드
+load_dotenv()
+
 app = Flask(__name__)
 
-# .env 파일이 있는 경우 로드 (주로 로컬 개발 환경에서 사용)
-dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
-if os.path.exists(dotenv_path):
-    load_dotenv(dotenv_path)
-else:
-    # .env 파일이 없는 경우 (배포 환경), 환경 변수가 설정되어 있다고 가정합니다.
-    # Render.com과 같은 서비스에서는 환경 변수를 직접 설정해야 합니다.
-    pass
-    
-# 환경 변수에서 설정 값들을 가져옵니다.
-mongo_uri = os.getenv("MONGO_URI")
 # MongoDB 및 Bcrypt 설정
-app.config["MONGO_URI"] = None  # 초기화
-app.config["MONGO_URI"] = mongo_uri
+app.config["MONGO_URI"] = os.getenv("MONGO_URI")
 mongo = PyMongo(app)
 bcrypt = Bcrypt(app)
 
@@ -182,10 +173,12 @@ def create_post(current_user):
     if 'image' not in request.files:
         return jsonify({'error': '이미지 파일이 필요합니다.'}), 400
 
-    def preprocess_image(input_path: str, output_path: str, max_long_side: int = 1280, quality: int = 90) -> str:
+    def preprocess_image(input_path: str, output_path: str, max_long_side: int = 1280, quality: int = 85) -> str:
         """
-        이미지 크기를 조정하고 메타데이터를 제거하여 표준 JPEG로 재압축합니다.
-        이는 다양한 원본 이미지의 워터마킹 호환성을 높입니다.
+        카카오톡과 유사하게 이미지를 표준 JPEG로 변환하여 워터마킹 호환성을 높입니다.
+        - 이미지 크기 조정 (긴 축 기준)
+        - 메타데이터(EXIF 등) 제거
+        - 표준 양자화 테이블을 사용한 강제 재압축
         """
         try:
             with Image.open(input_path) as img:
@@ -240,49 +233,49 @@ def create_post(current_user):
 
         steganographer = StegoDCT()
         
-        # 1. 워터마크 검증
+        # 1. 원본 이미지에서 워터마크를 먼저 확인
         original_owner_email = steganographer.decrypt(input_path)
 
         # 추출된 메시지에서 Null Byte 제거
         if original_owner_email:
             original_owner_email = original_owner_email.rstrip('\x00')
 
-
-        post = {}
-        image_to_upload = input_path
-
+        # 2. 워터마크 존재 여부에 따른 분기 처리
+        # 2-1. 워터마크가 없는 경우: 전처리 후 새로 삽입
         if not original_owner_email or '@' not in original_owner_email:
-            # 2-1. 워터마크 없음 -> 새로 삽입
-            # 메타데이터 제거 및 표준화를 위해 이미지 전처리
+            post = {'isViolation': False}
+            # 이미지를 표준 형식으로 변환
             preprocessed_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{unique_id}_preprocessed.jpg")
             preprocess_image(input_path, preprocessed_path)
-
+            # 워터마크 삽입
             output_filename = f"{unique_id}_encrypted.png"
             output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
             steganographer.encrypt(preprocessed_path, watermark_message, output_path, 'png')
             image_to_upload = output_path # 최종 업로드할 이미지는 워터마크가 삽입된 PNG
-            post = { 'isViolation': False }
-        
-        elif current_user['email'].startswith(original_owner_email) and len(current_user['email']) - len(original_owner_email) <= 1:
-            # 2-2. 자신의 워터마크 -> 정상 처리
-            post = { 'isViolation': False }
-        else:
-            # 2-3. 타인의 워터마크 -> 저작권 위반 처리
-            post = {
-                'isViolation': True,
-            }
-            # 마지막 글자가 잘린 경우를 대비해, DB에서 원본 소유자의 전체 이메일을 찾음
-            # 정규표현식을 사용하여 추출된 이메일로 시작하고, 정확히 한 글자가 더 있는 사용자를 찾음
-            regex_pattern = f"^{re.escape(original_owner_email)}.$"
-            found_owner = mongo.db.users.find_one({"email": {"$regex": regex_pattern}})
-            
-            if found_owner:
-                post['originalOwnerEmail'] = found_owner['email']
-            else:
-                # 일치하는 사용자를 찾지 못한 경우, 추출된 그대로 저장
-                post['originalOwnerEmail'] = original_owner_email
 
-        # 3. Cloudinary에 이미지 업로드
+        # 2-2. 워터마크가 있는 경우: 소유권 검증 (덮어쓰지 않음)
+        else:
+            # 이미지를 표준 형식으로 변환 (워터마크는 유지됨)
+            preprocessed_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{unique_id}_preprocessed.jpg")
+            preprocess_image(input_path, preprocessed_path)
+            image_to_upload = preprocessed_path # 워터마크를 새로 삽입하지 않고 전처리된 이미지 그대로 업로드
+
+            # 게시자와 워터마크 소유자가 같은 경우
+            if current_user['email'].startswith(original_owner_email):
+                post = {'isViolation': False}
+            # 게시자와 워터마크 소유자가 다른 경우
+            else:
+                post = {'isViolation': True}
+                # 마지막 글자가 잘린 경우를 대비해, DB에서 원본 소유자의 전체 이메일을 찾음
+                regex_pattern = f"^{re.escape(original_owner_email)}.$"
+                found_owner = mongo.db.users.find_one({"email": {"$regex": regex_pattern}})
+                if found_owner:
+                    post['originalOwnerEmail'] = found_owner['email']
+                else:
+                    # 일치하는 사용자를 찾지 못한 경우, 추출된 그대로 저장
+                    post['originalOwnerEmail'] = original_owner_email
+
+        # 3. Cloudinary에 최종 이미지 업로드
         upload_result = cloudinary.uploader.upload(image_to_upload, folder="dct_watermark")
         
         # 4. MongoDB에 게시물 정보 저장
@@ -394,8 +387,6 @@ def get_post(post_id):
     post = mongo.db.posts.find_one_or_404({'_id': ObjectId(post_id)})
     post['createdAt'] = post['createdAt'].isoformat()
     post['_id'] = str(post['_id'])
-    # 댓글 수 추가
-    post['commentCount'] = mongo.db.comments.count_documents({'post_id': ObjectId(post_id)})
     return jsonify(post), 200
 
 @app.route('/api/posts/<post_id>/like', methods=['PUT'])
@@ -541,8 +532,6 @@ def get_my_posts(current_user):
     posts = list(mongo.db.posts.find({'authorEmail': current_user['email']}).sort('createdAt', -1))
     for post in posts:
         post['_id'] = str(post['_id'])
-        # 댓글 수 추가
-        post['commentCount'] = mongo.db.comments.count_documents({'post_id': ObjectId(post['_id'])})
     return jsonify(posts), 200
 
 @app.route('/api/decrypt', methods=['POST'])
