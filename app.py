@@ -429,8 +429,12 @@ def delete_post(current_user, post_id):
     try:
         post = mongo.db.posts.find_one_or_404({'_id': ObjectId(post_id)})
 
-        # 게시물 작성자이거나 관리자인 경우에만 삭제 허용
-        if post['authorEmail'] != current_user['email'] and current_user.get('role') != 'admin':
+        # 저작권 위반 게시물인 경우 관리자만 삭제 가능
+        if post.get('isViolation'):
+            if current_user.get('role') != 'admin':
+                return jsonify({'error': '저작권 위반 의심 게시물은 관리자만 삭제할 수 있습니다.'}), 403
+        # 일반 게시물인 경우, 작성자 또는 관리자가 삭제 가능
+        elif post['authorEmail'] != current_user['email'] and current_user.get('role') != 'admin':
             return jsonify({'error': '삭제 권한이 없습니다.'}), 403
 
         # Cloudinary에서 이미지 삭제
